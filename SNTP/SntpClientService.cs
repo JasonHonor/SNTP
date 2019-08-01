@@ -1,18 +1,21 @@
 ﻿namespace NetworkTime
 {
+    using log4net;
     using System;
     using System.Configuration;
+    using System.Reflection;
+    using System.ServiceProcess;
     using System.Threading;
     using System.Threading.Tasks;
 
-    public class SntpClientService : IDisposable
+    public class SntpClientService : ServiceBase
     {
         private readonly Configuration config;
 
         private CancellationTokenSource cancellationTokenSource;
 
         private string server;
-        private int port = 123;
+        private int port = 1231;
         private bool updateClock = true;
         private int maxCorrection = 86400; // In milliseconds
         private int minCorrection = 1000; // In milliseconds
@@ -20,20 +23,26 @@
 
         private Task pollingTask;
 
+        protected ILog log = log4net.LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+
         public SntpClientService()
         {
+            log.Debug("SntpClientService");
+
             this.config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
             this.LoadSettings();
         }
 
-        public void OnStart()
+        protected override void OnStart(string[] args)
         {
+            log.Info("OnStart");
             this.cancellationTokenSource = new CancellationTokenSource();
             this.pollingTask = this.PollForTime();
         }
 
-        public void OnStop()
+        protected override void OnStop()
         {
+            log.Warn("OnStop");
             if (this.cancellationTokenSource != null)
             {
                 this.cancellationTokenSource.Cancel();
@@ -47,10 +56,11 @@
 
         public void Dispose()
         {
+            log.Debug("Dispose");
             this.Dispose(true);
         }
 
-        protected virtual void Dispose(bool dispose)
+        protected override void Dispose(bool dispose)
         {
             if (!dispose)
             {
@@ -67,37 +77,47 @@
         {
             while (!this.cancellationTokenSource.Token.IsCancellationRequested)
             {
-                Console.WriteLine("Requesting time data from the time source {0}.", this.server);
-
-                var client = new NtpClient(this.server, this.port);
-                var response = await client.SendAsync();
-                var offset = response.GetSystemClockOffset();
-
-                Console.WriteLine("Received time data from the time source {0}. The difference from the system time is {1} seconds.", this.server, offset);
-
-                this.SetLastPollTime(DateTime.UtcNow);
-
-                // Update system time
-                if (this.ShouldSetClock(TimeSpan.FromSeconds(offset)))
+                try
                 {
-                    IClock clock = new WindowsClock();
-                    Console.WriteLine("Synchronizing the system time with time source {0}.", this.server);
-                    var clockSet = clock.SetTimeUtc(DateTime.UtcNow.AddSeconds(offset));
-                    if (clockSet)
+                    log.DebugFormat("Requesting time data from the time source {0}.", this.server);
+
+                    var client = new NtpClient(this.server, this.port);
+                    log.Debug("before send.");
+                    var response = await client.SendAsync();
+                    log.Debug("before getsystemclock.");
+                    var offset = response.GetSystemClockOffset();
+
+                    log.DebugFormat("Received time data from the time source {0}. The difference from the system time is {1} seconds.", this.server, offset);
+
+                    this.SetLastPollTime(DateTime.UtcNow);
+
+                    // Update system time
+                    if (this.ShouldSetClock(TimeSpan.FromSeconds(offset)))
                     {
-                        this.SetLastUpdateTime(DateTime.UtcNow);
-                        Console.WriteLine("The system time was updated by {0} seconds.", offset);
+                        IClock clock = new WindowsClock();
+                        log.DebugFormat("Synchronizing the system time with time source {0}.", this.server);
+                        var clockSet = clock.SetTimeUtc(DateTime.UtcNow.AddSeconds(offset));
+                        if (clockSet)
+                        {
+                            this.SetLastUpdateTime(DateTime.UtcNow);
+                            log.DebugFormat("The system time was updated by {0} seconds.", offset);
+                        }
+                        else
+                        {
+                            var error = clock.GetLastError();
+                            log.DebugFormat("The system time could not be updated. Error code: {0}.", error);
+                        }
                     }
-                    else
-                    {
-                        var error = clock.GetLastError();
-                        Console.WriteLine("The system time could not be updated. Error code: {0}.", error);
-                    }
+
+                    log.Debug(response.ToString());
+
+                    
+                }catch(Exception e)
+                {
+                    log.ErrorFormat("Exception:{0}", e.Message);
                 }
-
-                Console.WriteLine(response.ToString());
-
                 await Task.Delay(TimeSpan.FromSeconds(this.pollingInterval));
+
             }
         }
 
@@ -107,19 +127,19 @@
         {
             if (!this.updateClock)
             {
-                Console.WriteLine("System time synchronization has been disabled in the configuration.");
+                log.Error("System time synchronization has been disabled in the configuration.");
                 return false;
             }
 
             if (this.maxCorrection < Math.Abs(offset.TotalMilliseconds))
             {
-                Console.WriteLine("The system time will not be updated because the time difference exceeds the maximum correction time allowed.");
+                log.Error("The system time will not be updated because the time difference exceeds the maximum correction time allowed.");
                 return false;
             }
 
             if (this.minCorrection > Math.Abs(offset.TotalMilliseconds))
             {
-                Console.WriteLine("The system time will not be updated because the time difference does not meet the minimum correction time allowed.");
+                log.Error("The system time will not be updated because the time difference does not meet the minimum correction time allowed.");
                 return false;
             }
 

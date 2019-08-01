@@ -1,18 +1,27 @@
 ﻿namespace NetworkTime
 {
+    using log4net;
+    using log4net.Core;
     using System;
+    using System.Reflection;
+    using System.ServiceProcess;
     using System.Threading;
 
     public class Program
     {
         public static int Main(string[] args)
         {
-            //RunService();
+            log4net.Config.XmlConfigurator.Configure();
+
+            ILog log = log4net.LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+
+            log.Debug("Service starting.");
 
             if (args.Length < 1)
             {
-                Console.WriteLine("Usage: sntp.exe servername");
-            }
+                RunService();
+                return 0;
+            }            
 
             var timeServer = args[0];
             var client = new NtpClient(timeServer, 124);
@@ -29,19 +38,23 @@
                 offsetSign,
                 clockOffset);
 
-            Console.WriteLine(output);
-            Console.WriteLine();
-            Console.WriteLine(response.ToString());
+            log.Debug(output);
+            log.Debug(response.ToString());
 
             return 0;
         }
 
         public static void RunService()
         {
-            var service = new SntpClientService();
-            service.OnStart();
-            Thread.Sleep(-1);
-            service.OnStop();
+            ILog log = log4net.LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+            log.Debug("RunService");
+
+            ServiceBase[] ServicesToRun;
+            ServicesToRun = new ServiceBase[]
+            {
+                new SntpClientService()
+            };
+            ServiceBase.Run(ServicesToRun);
         }
     }
 }
